@@ -13,6 +13,7 @@ Jerry@Jerrys-macbook ~ % ls
 stocks.xls
 <snip>
 
+If the Mac menubar is too crowded.  The application will be running but, the value will not be seen until other menubar icons are removed.
 
 
 
