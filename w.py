@@ -1,12 +1,13 @@
 import os
 import pandas as pd
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 import yfinance as yf
 import tkinter as tk
 from tkinter import filedialog
 import rumps
 from AppKit import NSApplication, NSStatusBar, NSTextField, NSColor, NSView, NSMakeRect, NSVariableStatusItemLength
 import pandas_market_calendars as mcal
+from pytz import timezone
 
 def get_file_path():
     home_dir = os.path.expanduser('~')
@@ -112,22 +113,28 @@ class StockApp(rumps.App):
             return
 
         # If NYSE is open, proceed with the original logic
-        nyse_closing_time = nyse_schedule_today['market_close'].to_pydatetime().time()
+        nyse_closing_time_utc = nyse_schedule_today['market_close'].to_pydatetime()
+        # Make it timezone-aware in UTC
+        eastern_tz = timezone('US/Eastern')
+        nyse_closing_datetime_est = nyse_closing_time_utc.astimezone(eastern_tz)
+        nyse_closing_time_est = nyse_closing_datetime_est.time()
         current_time = datetime.now().time()
-        print(f"NYSE Closing Time: {nyse_closing_time}, Current Time: {current_time}")
+        print(f"NYSE Closing Time: {nyse_closing_time_est}, Current Time: {current_time}")
 
         for ticker_symbol in self.ticker_symbols:
             try:
                 ticker = yf.Ticker(ticker_symbol)
-                if current_time >= nyse_closing_time:  # If it's after NYSE closing time
+                if current_time >= nyse_closing_time_est:  # If it's after NYSE closing time
                     # Fetch the current day's close price
                     data = ticker.history(start=today, end=today + timedelta(days=1), interval="1d")
                     print(f"Data for {ticker_symbol}: {data}")
                     if not data.empty:
-                        closing_price = data['Close'].iloc[-1]
+                        closing_price = data['Close'].iloc[0]
                         self.cached_closing_prices[ticker_symbol] = closing_price  # Update cache
                     else:
-                        closing_price = None
+                        # If no data is available, use the last cached price
+                        closing_price = self.cached_closing_prices.get(ticker_symbol, None)
+                        print(f"No data available for {ticker_symbol} after market close. Using cached price: {closing_price}")
                 else:
                     # Use the cached closing price if available
                     if ticker_symbol in self.cached_closing_prices:
@@ -155,7 +162,12 @@ class StockApp(rumps.App):
                 # Fetch the current price including extended hours trading
                 current_day_data = ticker.history(period='1d', interval='1m', prepost=True).tail(1)
                 print(f"Current Day Data for {ticker_symbol}: {current_day_data}")
-                current_price = current_day_data['Close'].iloc[-1]
+                if not current_day_data.empty:
+                    current_price = current_day_data['Close'].iloc[-1]
+                else:
+                    # Fallback to the previous day's closing price if premarket data is unavailable
+                    current_price = self.cached_closing_prices.get(ticker_symbol, None)
+                    print(f"No premarket data available for {ticker_symbol}. Using cached price: {current_price}")
                 
 
                 total_value_today = current_price * self.shares[ticker_symbol]
@@ -163,8 +175,7 @@ class StockApp(rumps.App):
                 
             except Exception as e:
                 print(f"Error occurred for {ticker_symbol}: {e}")
-        print(closing_price)
-        print(current_price)
+
         change_in_value = total_portfolio_value_today - total_portfolio_value_yesterday
         formatted_change_in_value = "${:,.2f}".format(change_in_value)
         print(formatted_change_in_value)
